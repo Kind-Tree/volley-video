@@ -14,13 +14,20 @@
   button, select { margin: 12px 4px 0; padding: 10px 12px; font-size: 16px; cursor: pointer; }
   select { max-width: 100%; }
   label { display: inline-block; margin: 12px 8px 0; }
+  [hidden] { display: none !important; }
+  #zoneYoutube, #video { width: 100%; height: 100%; }
+  #video { display: block; background: #000; }
+  #infoFichier { margin: 12px 0 0; font-size: 14px; color: #bbb; }
 </style>
 </head>
 <body>
 <main>
   <h1 id="titre">Chargement…</h1>
   <p id="consigne"></p>
-  <div id="cadre"><div id="lecteur"></div></div>
+  <div id="cadre">
+    <div id="zoneYoutube"><div id="lecteur"></div></div>
+    <video id="video" controls playsinline preload="auto" hidden></video>
+  </div>
 
   <button id="precedent">⏮ Précédent</button>
   <button id="lancer">▶ Lancer / Rejouer</button>
@@ -35,6 +42,11 @@
     </select>
   </label>
   <label><input type="checkbox" id="auto" checked> Enchaîner automatiquement</label>
+  <br>
+  <button id="choisirMp4">📁 Choisir un fichier MP4</button>
+  <button id="retourYoutube" hidden>↩ Revenir à YouTube</button>
+  <input type="file" id="fichier" accept="video/mp4,.mp4,.m4v" hidden>
+  <div id="infoFichier" hidden></div>
 </main>
 
 <script>
@@ -82,20 +94,56 @@
   ];
 
   // ===== FONCTIONNEMENT =====
-  let lecteur;
+  // Deux sources possibles pour les mêmes ACTIONS :
+  //  - "youtube" : la vidéo VIDEO, lue avec l'API YouTube (mode par défaut) ;
+  //  - "mp4"     : un fichier choisi sur l'ordinateur, lu sur place sans être envoyé en ligne.
+  const MESSAGE_YOUTUBE_INDISPONIBLE = "YouTube est indisponible. Choisis un fichier MP4 pour continuer.";
+  const MESSAGE_MP4_ILLISIBLE = "Ce fichier n'est pas lisible dans ce navigateur. Essaie un MP4 encodé en H.264/AAC.";
+  const DELAI_YOUTUBE = 15000;    // ms d'attente maximale de l'API YouTube
+  const PAUSE_AVANT_SUITE = 2000; // ms d'affichage du message quand une action est hors du fichier
+
+  let mode = "youtube";
   let index = 0;
+
+  // État du mode YouTube
+  let lecteur;
+  let etatYoutube = "chargement"; // "chargement", "pret" ou "indisponible"
   let enLecture = false; // évite de sauter une action si YouTube signale deux fois la fin
+
+  // État du mode MP4
+  const video = document.getElementById("video");
+  let urlLocale = null;         // adresse temporaire du fichier (URL.createObjectURL)
+  let metadonneesPretes = false; // durée connue, positionnement possible
+  let fichierIllisible = false;
+  let lectureDemandee = false;  // « Lancer » cliqué avant que le fichier soit prêt
+  let extraitActif = false;     // vrai entre le début et la fin d'un extrait
+  let finExtrait = 0;           // en secondes
+  let jeton = 0;                // change à chaque extrait : invalide les minuteurs précédents
+  let surveillance = null;      // identifiant requestAnimationFrame
+  let minuteurSuite = null;
 
   const element = (id) => document.getElementById(id);
 
   const secondes = (temps) =>
     temps.split(":").reduce((total, valeur) => total * 60 + Number(valeur), 0);
 
-  const parametres = (action) => ({
-    videoId: VIDEO,
-    startSeconds: Math.max(secondes(action.temps) - AVANT, 0),
-    endSeconds: action.fin ? secondes(action.fin) : secondes(action.temps) + APRES
+  const minutes = (total) => {
+    const s = Math.floor(total);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+
+  const vitesse = () => Number(element("vitesse").value);
+
+  // Bornes d'un extrait, communes aux deux modes.
+  const bornes = (action) => ({
+    debut: Math.max(secondes(action.temps) - AVANT, 0),
+    fin: action.fin ? secondes(action.fin) : secondes(action.temps) + APRES
   });
+
+  const parametres = (action) => {
+    const { debut, fin } = bornes(action);
+    return { videoId: VIDEO, startSeconds: debut, endSeconds: fin };
+  };
 
   ACTIONS.forEach((action, position) => {
     const option = document.createElement("option");
@@ -115,8 +163,12 @@
   function jouer(position) {
     index = position;
     afficher();
-    enLecture = false;
-    lecteur.loadVideoById(parametres(ACTIONS[index]));
+    annulerSuite();
+    if (mode === "mp4") {
+      jouerMp4();
+    } else {
+      jouerYoutube();
+    }
   }
 
   function suivante() {
@@ -128,6 +180,7 @@
     }
   }
 
+  // ----- Mode YouTube -----
   function messageErreur(code) {
     if (code === 101 || code === 150) {
       return "YouTube n'autorise pas la lecture de cette vidéo dans une page externe.";
@@ -138,6 +191,33 @@
     return `La vidéo ne peut pas être lue (erreur ${code}).`;
   }
 
+  function signalerYoutubeIndisponible() {
+    if (etatYoutube === "pret") return;
+    etatYoutube = "indisponible";
+    if (mode === "youtube") element("consigne").textContent = MESSAGE_YOUTUBE_INDISPONIBLE;
+  }
+
+  function jouerYoutube() {
+    if (etatYoutube !== "pret") {
+      element("consigne").textContent = etatYoutube === "indisponible"
+        ? MESSAGE_YOUTUBE_INDISPONIBLE
+        : "YouTube est en cours de chargement…";
+      return;
+    }
+    enLecture = false;
+    lecteur.loadVideoById(parametres(ACTIONS[index]));
+  }
+
+  // Recharge l'action en cours dans YouTube sans lancer la lecture.
+  function preparerYoutube() {
+    if (etatYoutube === "pret") {
+      enLecture = false;
+      lecteur.cueVideoById(parametres(ACTIONS[index]));
+    } else if (etatYoutube === "indisponible") {
+      element("consigne").textContent = MESSAGE_YOUTUBE_INDISPONIBLE;
+    }
+  }
+
   function onYouTubeIframeAPIReady() {
     lecteur = new YT.Player("lecteur", {
       width: "100%",
@@ -145,10 +225,14 @@
       playerVars: { playsinline: 1, rel: 0 },
       events: {
         onReady: () => {
-          afficher();
-          lecteur.cueVideoById(parametres(ACTIONS[0]));
+          etatYoutube = "pret";
+          if (mode === "youtube") {
+            afficher();
+            lecteur.cueVideoById(parametres(ACTIONS[index]));
+          }
         },
         onStateChange: (evenement) => {
+          if (mode !== "youtube") return;
           if (evenement.data === YT.PlayerState.PLAYING) {
             enLecture = true;
             lecteur.setPlaybackRate(Number(element("vitesse").value));
@@ -159,23 +243,199 @@
           }
         },
         onError: (evenement) => {
-          element("consigne").textContent = messageErreur(evenement.data);
+          if (mode === "youtube") element("consigne").textContent = messageErreur(evenement.data);
         }
       }
     });
   }
 
+  // ----- Mode MP4 local -----
+  function annulerSuite() {
+    clearTimeout(minuteurSuite);
+    minuteurSuite = null;
+  }
+
+  function arreterSurveillance() {
+    if (surveillance !== null) cancelAnimationFrame(surveillance);
+    surveillance = null;
+  }
+
+  // Surveille le temps image par image tant que l'extrait est en lecture.
+  function demarrerSurveillance() {
+    if (!extraitActif || surveillance !== null) return;
+    const boucle = () => {
+      surveillance = null;
+      verifierFin();
+      if (extraitActif && !video.paused) surveillance = requestAnimationFrame(boucle);
+    };
+    surveillance = requestAnimationFrame(boucle);
+  }
+
+  function verifierFin() {
+    if (extraitActif && video.currentTime >= finExtrait) terminerExtrait();
+  }
+
+  function terminerExtrait() {
+    if (!extraitActif) return; // déjà terminé : jamais de double déclenchement
+    extraitActif = false;
+    arreterSurveillance();
+    video.pause();
+    if (element("auto").checked) suivante();
+  }
+
+  // Place la vidéo au début de l'action en cours et fixe sa fin, sans lancer la lecture.
+  // Renvoie false si l'action commence après la fin du fichier.
+  function armerMp4() {
+    const action = ACTIONS[index];
+    const { debut, fin } = bornes(action);
+    const duree = video.duration;
+    const dureeConnue = Number.isFinite(duree);
+    if (dureeConnue && debut >= duree) {
+      element("consigne").textContent =
+        `L'action ${index + 1} (${action.temps}) commence après la fin du fichier (${minutes(duree)}).`;
+      return false;
+    }
+    finExtrait = dureeConnue ? Math.min(fin, duree) : fin;
+    video.currentTime = debut;
+    video.playbackRate = vitesse();
+    extraitActif = true;
+    return true;
+  }
+
+  function jouerMp4() {
+    const monJeton = ++jeton;
+    extraitActif = false;
+    arreterSurveillance();
+    video.pause();
+    if (fichierIllisible) {
+      element("consigne").textContent = MESSAGE_MP4_ILLISIBLE;
+      return;
+    }
+    if (!metadonneesPretes) {
+      lectureDemandee = true; // la lecture partira dès que le fichier sera prêt
+      return;
+    }
+    if (!armerMp4()) {
+      if (element("auto").checked) {
+        minuteurSuite = setTimeout(() => {
+          if (monJeton === jeton) suivante();
+        }, PAUSE_AVANT_SUITE);
+      }
+      return;
+    }
+    video.play().catch(() => {});
+  }
+
+  // Arrête le fichier en cours et libère son adresse temporaire.
+  function arreterMp4() {
+    jeton++;
+    extraitActif = false;
+    lectureDemandee = false;
+    metadonneesPretes = false;
+    fichierIllisible = false;
+    arreterSurveillance();
+    annulerSuite();
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    if (urlLocale) {
+      URL.revokeObjectURL(urlLocale);
+      urlLocale = null;
+    }
+  }
+
+  function basculerAffichage() {
+    const mp4 = mode === "mp4";
+    element("zoneYoutube").hidden = mp4;
+    video.hidden = !mp4;
+    element("retourYoutube").hidden = !mp4;
+    element("infoFichier").hidden = !mp4;
+  }
+
+  function choisirFichier(fichier) {
+    if (!fichier) return;
+    arreterMp4();
+    if (etatYoutube === "pret") {
+      try { lecteur.pauseVideo(); } catch (erreur) {}
+    }
+    enLecture = false;
+    mode = "mp4";
+    basculerAffichage();
+    element("infoFichier").textContent =
+      `${fichier.name} — Lecture locale : la vidéo reste sur cet ordinateur`;
+    afficher();
+    urlLocale = URL.createObjectURL(fichier);
+    video.src = urlLocale;
+  }
+
+  function revenirYoutube() {
+    arreterMp4();
+    mode = "youtube";
+    basculerAffichage();
+    afficher();
+    preparerYoutube();
+  }
+
+  video.addEventListener("loadedmetadata", () => {
+    if (!urlLocale) return;
+    metadonneesPretes = true;
+    if (video.videoWidth === 0) {
+      fichierIllisible = true; // son seul ou image non décodable
+      element("consigne").textContent = MESSAGE_MP4_ILLISIBLE;
+      return;
+    }
+    if (lectureDemandee) {
+      lectureDemandee = false;
+      jouerMp4();
+    } else {
+      armerMp4();
+    }
+  });
+  video.addEventListener("error", () => {
+    if (!urlLocale || !video.error) return; // erreur liée à l'arrêt volontaire d'un fichier
+    fichierIllisible = true;
+    lectureDemandee = false;
+    extraitActif = false;
+    arreterSurveillance();
+    annulerSuite();
+    element("consigne").textContent = MESSAGE_MP4_ILLISIBLE;
+  });
+  video.addEventListener("play", demarrerSurveillance);
+  video.addEventListener("pause", arreterSurveillance);
+  video.addEventListener("timeupdate", verifierFin); // secours si l'onglet est en arrière-plan
+  video.addEventListener("ended", () => {
+    if (extraitActif) terminerExtrait();
+  });
+
+  // ----- Commandes communes -----
   element("lancer").onclick = () => jouer(index);
   element("precedent").onclick = () => jouer(Math.max(index - 1, 0));
   element("suivant").onclick = () => jouer(Math.min(index + 1, ACTIONS.length - 1));
   element("liste").onchange = (evenement) => jouer(Number(evenement.target.value));
   element("vitesse").onchange = (evenement) => {
-    if (lecteur) lecteur.setPlaybackRate(Number(evenement.target.value));
+    const choix = Number(evenement.target.value);
+    if (mode === "mp4") {
+      video.playbackRate = choix;
+    } else if (etatYoutube === "pret") {
+      lecteur.setPlaybackRate(choix);
+    }
   };
+  element("choisirMp4").onclick = () => element("fichier").click();
+  element("fichier").onchange = (evenement) => {
+    const fichier = evenement.target.files[0];
+    evenement.target.value = ""; // permet de rechoisir le même fichier
+    choisirFichier(fichier);
+  };
+  element("retourYoutube").onclick = revenirYoutube;
+
+  // Première action affichée tout de suite, sans attendre YouTube.
+  afficher();
 
   const script = document.createElement("script");
   script.src = "https://www.youtube.com/iframe_api";
+  script.onerror = signalerYoutubeIndisponible;
   document.head.appendChild(script);
+  setTimeout(signalerYoutubeIndisponible, DELAI_YOUTUBE);
 </script>
 </body>
 </html>

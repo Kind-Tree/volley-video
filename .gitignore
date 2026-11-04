@@ -1,0 +1,7 @@
+# Vidéos : ne jamais les ajouter au dépôt (lecture locale uniquement)
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.m4v
+*.avi
