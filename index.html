@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analyse vidéo volley</title>
+<style>
+  body { margin: 0; background: #111; color: #fff; font-family: system-ui, sans-serif; text-align: center; }
+  main { max-width: 960px; margin: auto; padding: 16px; }
+  h1 { margin: 8px 0; font-size: 22px; }
+  p { min-height: 48px; margin: 8px 0 16px; font-size: 18px; }
+  #cadre { aspect-ratio: 16 / 9; background: #000; }
+  button, select { margin: 12px 4px 0; padding: 10px 12px; font-size: 16px; cursor: pointer; }
+  select { max-width: 100%; }
+  label { display: inline-block; margin: 12px 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="titre">Chargement…</h1>
+  <p id="consigne"></p>
+  <div id="cadre"><div id="lecteur"></div></div>
+
+  <button id="precedent">⏮ Précédent</button>
+  <button id="lancer">▶ Lancer / Rejouer</button>
+  <button id="suivant">Suivant ⏭</button>
+  <br>
+  <select id="liste" aria-label="Aller à une action"></select>
+  <label>Vitesse
+    <select id="vitesse">
+      <option value="0.25">x0,25</option>
+      <option value="0.5">x0,5</option>
+      <option value="1" selected>x1</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="auto" checked> Enchaîner automatiquement</label>
+</main>
+
+<script>
+  // ===== RÉGLAGES =====
+  const VIDEO = "YRw4B4BIxxI";
+  const AVANT = 3;  // secondes affichées avant chaque timecode
+  const APRES = 10; // secondes affichées après chaque timecode
+  const AFFICHER_NOTES = true; // false = masque les notes à l'écran
+
+  // ===== ACTIONS =====
+  // Ajoute fin: "mm:ss" à une action pour choisir précisément sa fin.
+  const ACTIONS = [
+    { set: 1, temps: "0:01", note: "Julien trop proche du poste 6, garder la diag" },
+    { set: 1, temps: "0:50", note: "Absence au block, décision douteuse de l'arbitre" },
+    { set: 1, temps: "1:55", note: "Analyse de trajectoire trop tardive → pas bien placé au block" },
+    { set: 1, temps: "2:20", note: "Arthur spectateur ⚠ aucune excuse, manque d'engagement" },
+    { set: 1, temps: "3:10", note: "Sautent haut, Gonzague, si tu t'imposes jamais, on doit relancer en 3e contact, communication" },
+    { set: 1, temps: "3:30", note: "Être prêt plus vite, lire le bras du serveur, pas une surprise, il avait déjà servi avant fond de terrain" },
+    { set: 1, temps: "3:40", note: "Ace dans l'intervalle, priorité (?) gauche de main (?), ballon arrive vite et slicé, Arthur tu dois au moins essayer, adaptabilité" },
+    { set: 1, temps: "4:40", note: "Franchissement block, version (?)" },
+    { set: 1, temps: "4:55", note: "Choix de passe → poste 4, blockeur en face" },
+    { set: 1, temps: "6:30", note: "Sacha flotte, sans block on défend, faut être… (?)" },
+    { set: 1, temps: "6:55", note: "Arthur → intervalle, 3 aces + 1 réception chez eux = 4 points" },
+    { set: 1, temps: "8:15", note: "Jean amorce diag mais doit mettre les mains sur le ballon" },
+    { set: 1, temps: "8:30", note: "Franchissement au block" },
+
+    { set: 2, temps: "9:15", note: "Ace → Julien" },
+    { set: 2, temps: "10:30", note: "Pierre → doit la mettre au sol → (?)" },
+    { set: 2, temps: "12:15", note: "Inter gauche, Julien tu coupes dans le service pour aider Pierre, pourquoi ça marche pas avec Arthur ?" },
+    { set: 2, temps: "13:20", note: "Julien adaptabilité, vers derrière le block" },
+    { set: 2, temps: "15:18", note: "Gonzague a une réception derrière le spot (?), choix simple = Hugo en forme à ce moment-là" },
+    { set: 2, temps: "16:15", note: "Gonzague doit sauver haut contre-terrain pour relais Jean poste 6" },
+    { set: 2, temps: "17:00", fin: "17:30", note: "Placement Julien, peu de trou dans le block, ensuite Taha (?) fort (?) au service → série de 6 fautes directes" },
+    { set: 2, temps: "19:35", note: "Relance Flo" },
+    { set: 2, temps: "19:50", note: "Réception, retour direct Julien" },
+
+    { set: 3, temps: "22:40", note: "2 fautes de service d'affilée, attention à la dynamique" },
+    { set: 3, temps: "23:15", note: "Pierre attend le ballon déjà en manchette → avance 1 pas + 10 doigts" },
+    { set: 3, temps: "24:25", note: "Gonzague sur la bidouille (?) ⚠" },
+    { set: 3, temps: "25:18", note: "Sacha ne se force pas = gêne Arthur et ne peut pas enchaîner fixe sur bonne réception" },
+    { set: 3, temps: "28:20", note: "Hugo derrière le block" },
+    { set: 3, temps: "28:35", note: "Comment Flo peut s'arracher pour ne rien essayer derrière, encore une fois. Julien → Arthur" },
+    { set: 3, temps: "30:30", note: "10 cm de toi Julien → intervalle Arthur et toi → tu es libero ⚠" },
+    { set: 3, temps: "31:40", note: "Hugo → main extérieure donnée à l'adversaire" }
+  ];
+
+  // ===== FONCTIONNEMENT =====
+  let lecteur;
+  let index = 0;
+
+  const element = (id) => document.getElementById(id);
+
+  const secondes = (temps) =>
+    temps.split(":").reduce((total, valeur) => total * 60 + Number(valeur), 0);
+
+  const parametres = (action) => ({
+    videoId: VIDEO,
+    startSeconds: Math.max(secondes(action.temps) - AVANT, 0),
+    endSeconds: action.fin ? secondes(action.fin) : secondes(action.temps) + APRES
+  });
+
+  ACTIONS.forEach((action, position) => {
+    const option = document.createElement("option");
+    option.value = position;
+    option.textContent = `${position + 1}. Set ${action.set} – ${action.temps}`;
+    element("liste").appendChild(option);
+  });
+
+  function afficher() {
+    const action = ACTIONS[index];
+    element("titre").textContent =
+      `Action ${index + 1}/${ACTIONS.length} – Set ${action.set} – ${action.temps}`;
+    element("consigne").textContent = AFFICHER_NOTES ? action.note : "";
+    element("liste").value = index;
+  }
+
+  function jouer(position) {
+    index = position;
+    afficher();
+    lecteur.loadVideoById(parametres(ACTIONS[index]));
+  }
+
+  function suivante() {
+    if (index < ACTIONS.length - 1) {
+      jouer(index + 1);
+    } else {
+      element("titre").textContent = "Fin de la séquence";
+      element("consigne").textContent = "";
+    }
+  }
+
+  function messageErreur(code) {
+    if (code === 101 || code === 150) {
+      return "YouTube n'autorise pas la lecture de cette vidéo dans une page externe.";
+    }
+    if (code === 153) {
+      return "Erreur 153 : ouvre la page depuis son adresse https et désactive les extensions de confidentialité.";
+    }
+    return `La vidéo ne peut pas être lue (erreur ${code}).`;
+  }
+
+  function onYouTubeIframeAPIReady() {
+    lecteur = new YT.Player("lecteur", {
+      width: "100%",
+      height: "100%",
+      playerVars: { playsinline: 1, rel: 0 },
+      events: {
+        onReady: () => {
+          afficher();
+          lecteur.cueVideoById(parametres(ACTIONS[0]));
+        },
+        onStateChange: (evenement) => {
+          if (evenement.data === YT.PlayerState.PLAYING) {
+            lecteur.setPlaybackRate(Number(element("vitesse").value));
+          }
+          if (evenement.data === YT.PlayerState.ENDED && element("auto").checked) {
+            suivante();
+          }
+        },
+        onError: (evenement) => {
+          element("consigne").textContent = messageErreur(evenement.data);
+        }
+      }
+    });
+  }
+
+  element("lancer").onclick = () => jouer(index);
+  element("precedent").onclick = () => jouer(Math.max(index - 1, 0));
+  element("suivant").onclick = () => jouer(Math.min(index + 1, ACTIONS.length - 1));
+  element("liste").onchange = (evenement) => jouer(Number(evenement.target.value));
+  element("vitesse").onchange = (evenement) => {
+    if (lecteur) lecteur.setPlaybackRate(Number(evenement.target.value));
+  };
+
+  const script = document.createElement("script");
+  script.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(script);
+</script>
+</body>
+</html>
