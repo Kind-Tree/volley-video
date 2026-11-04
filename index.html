@@ -84,6 +84,7 @@
   // ===== FONCTIONNEMENT =====
   let lecteur;
   let index = 0;
+  let enLecture = false; // évite de sauter une action si YouTube signale deux fois la fin
 
   const element = (id) => document.getElementById(id);
 
@@ -114,6 +115,7 @@
   function jouer(position) {
     index = position;
     afficher();
+    enLecture = false;
     lecteur.loadVideoById(parametres(ACTIONS[index]));
   }
 
@@ -148,10 +150,12 @@
         },
         onStateChange: (evenement) => {
           if (evenement.data === YT.PlayerState.PLAYING) {
+            enLecture = true;
             lecteur.setPlaybackRate(Number(element("vitesse").value));
           }
-          if (evenement.data === YT.PlayerState.ENDED && element("auto").checked) {
-            suivante();
+          if (evenement.data === YT.PlayerState.ENDED && enLecture) {
+            enLecture = false;
+            if (element("auto").checked) suivante();
           }
         },
         onError: (evenement) => {
