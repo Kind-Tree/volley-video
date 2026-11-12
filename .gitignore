@@ -5,3 +5,6 @@
 *.webm
 *.m4v
 *.avi
+
+# Donnees brutes eventuelles (jamais sur GitHub)
+donnees/
