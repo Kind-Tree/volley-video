@@ -13,3 +13,6 @@ timecodes/
 *.srt
 __pycache__/
 *.pyc
+
+# Donnees brutes eventuelles (jamais sur GitHub)
+donnees/
