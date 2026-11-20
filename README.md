@@ -64,3 +64,7 @@ Pour qui reprend le code, humain ou assistant.
 - **YouTube :** l'API signale parfois deux fois la fin d'un extrait. Le drapeau `enLecture` évite de sauter une action. La première action s'affiche sans attendre l'API. Si l'API échoue ou ne répond pas en 15 s (`DELAI_YOUTUBE`), un message invite à choisir un MP4.
 - **MP4 :** le fichier est lu via `URL.createObjectURL`. La fin d'extrait est surveillée avec `requestAnimationFrame` pendant la lecture, et `timeupdate` sert de secours. `extraitActif` empêche tout double déclenchement (fin, `ended`, clics rapides), et `jeton` invalide les minuteurs devenus obsolètes. La fin est limitée à la durée du fichier. Une action qui commence après la fin du fichier affiche un message, puis passe à la suivante après 2 s si l'enchaînement est coché. L'URL est libérée (`revokeObjectURL`) quand on change de fichier ou qu'on revient à YouTube.
 - **Tests :** quand l'onglet n'est pas affiché à l'écran, le navigateur suspend `requestAnimationFrame`. Seul `timeupdate` arrête alors l'extrait, avec jusqu'à environ 0,25 s de retard. Il faut mesurer la précision de fin avec la page visible.
+
+## Outil de montage (montage.py)
+
+Outil local, séparé de la page web : il assemble en une vidéo les actions d'un match à partir de timecodes (`timecodes/`), avec commentaires en sous-titres. Voir `CLAUDE.md` pour le format des fichiers et les options (`--precis`, `--incruster`, `--partage`, `--tag`, `--tous`, `--separes`). Les dossiers `matchs/`, `montages/` et `timecodes/` ne sont jamais publiés (`.gitignore`).
