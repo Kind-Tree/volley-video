@@ -6,5 +6,10 @@
 *.m4v
 *.avi
 
-# Donnees brutes eventuelles (jamais sur GitHub)
-donnees/
+# Montages, matchs, timecodes et sous-titres : jamais en ligne (depot public)
+matchs/
+montages/
+timecodes/
+*.srt
+__pycache__/
+*.pyc
